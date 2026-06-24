@@ -1,6 +1,7 @@
-import { useState, useRef, useEffect } from 'react';
+import { useState, useRef, useEffect, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { io } from 'socket.io-client';
+import Peer from 'simple-peer';
 
 export default function GuestRoom() {
   const { roomId } = useParams();
@@ -8,51 +9,161 @@ export default function GuestRoom() {
   const [username, setUsername] = useState('');
   const [joined, setJoined] = useState(false);
   const [peers, setPeers] = useState([]);
+  const [mediaError, setMediaError] = useState(null);
+  const [connecting, setConnecting] = useState(false);
   const localVideoRef = useRef(null);
   const socketRef = useRef(null);
+  const peersRef = useRef({});
+  const userInfoRef = useRef({});
+  const localStreamRef = useRef(null);
 
   useEffect(() => {
     return () => {
+      Object.values(peersRef.current).forEach((p) => p.peer.destroy());
+      peersRef.current = {};
+      if (localStreamRef.current) {
+        localStreamRef.current.getTracks().forEach((t) => t.stop());
+        localStreamRef.current = null;
+      }
       if (socketRef.current) socketRef.current.disconnect();
     };
   }, []);
 
+  const createPeer = useCallback((targetSocketId, initiator) => {
+    const stream = localStreamRef.current;
+    if (!stream) return null;
+
+    const peer = new Peer({
+      initiator,
+      stream,
+      trickle: true,
+      config: {
+        iceServers: [
+          { urls: 'stun:stun.l.google.com:19302' },
+          { urls: 'stun:stun1.l.google.com:19302' },
+        ],
+      },
+    });
+
+    peersRef.current[targetSocketId] = { peer, stream: null, socketId: targetSocketId };
+
+    peer.on('signal', (signal) => {
+      socketRef.current?.emit('signal', { to: targetSocketId, signal });
+    });
+
+    peer.on('stream', (remoteStream) => {
+      const entry = peersRef.current[targetSocketId];
+      if (entry) {
+        entry.stream = remoteStream;
+        setPeers(Object.values(peersRef.current));
+      }
+    });
+
+    peer.on('error', (err) => {
+      console.error('[Guest] Peer error:', err);
+    });
+
+    peer.on('close', () => {
+      delete peersRef.current[targetSocketId];
+      setPeers(Object.values(peersRef.current));
+    });
+
+    return peer;
+  }, []);
+
   const joinRoom = async () => {
     if (!username.trim()) return;
+    setConnecting(true);
 
-    socketRef.current = io({
+    let stream;
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+      localStreamRef.current = stream;
+      if (localVideoRef.current) {
+        localVideoRef.current.srcObject = stream;
+      }
+    } catch (err) {
+      setMediaError(err.message);
+      setConnecting(false);
+      return;
+    }
+
+    const socket = io({
       transports: ['polling', 'websocket'],
       reconnectionAttempts: 10,
       reconnectionDelay: 1000,
       timeout: 20000,
     });
+    socketRef.current = socket;
 
-    socketRef.current.on('connect', () => {
-      socketRef.current.emit('join-room', {
+    socket.on('connect', () => {
+      socket.emit('join-room', {
         roomId,
-        user: { id: 'guest_' + socketRef.current.id, name: username.trim() },
+        user: { id: 'guest_' + socket.id, name: username.trim() },
       });
       setJoined(true);
+      setConnecting(false);
     });
 
-    navigator.mediaDevices.getUserMedia({ video: true, audio: true })
-      .then((stream) => {
-        window.localStream = stream;
-        if (localVideoRef.current) {
-          localVideoRef.current.srcObject = stream;
+    socket.on('room-users', ({ users }) => {
+      users.forEach((u) => {
+        if (u.socketId !== socket.id) {
+          userInfoRef.current[u.socketId] = { userId: u.id, name: u.name };
+          if (!peersRef.current[u.socketId]) {
+            createPeer(u.socketId, true);
+          }
         }
-      })
-      .catch((err) => {
-        console.error('Media error:', err);
       });
+    });
+
+    socket.on('user-joined', ({ userId, name, socketId }) => {
+      userInfoRef.current[socketId] = { userId, name };
+      if (!peersRef.current[socketId]) {
+        createPeer(socketId, false);
+      }
+    });
+
+    socket.on('signal', ({ from, signal, user }) => {
+      if (user) {
+        userInfoRef.current[from] = { userId: user.id, name: user.name };
+      }
+      const peerData = peersRef.current[from];
+      if (!peerData) {
+        const peer = createPeer(from, false);
+        if (peer) peer.signal(signal);
+      } else {
+        peerData.peer.signal(signal);
+      }
+    });
+
+    socket.on('user-left', ({ userId, socketId }) => {
+      const peerData = peersRef.current[socketId];
+      if (peerData) {
+        peerData.peer.destroy();
+        delete peersRef.current[socketId];
+        setPeers(Object.values(peersRef.current));
+      }
+      delete userInfoRef.current[socketId];
+    });
   };
 
   const handleLeave = () => {
-    if (window.localStream) {
-      window.localStream.getTracks().forEach((t) => t.stop());
+    Object.values(peersRef.current).forEach((p) => p.peer.destroy());
+    peersRef.current = {};
+    if (localStreamRef.current) {
+      localStreamRef.current.getTracks().forEach((t) => t.stop());
+      localStreamRef.current = null;
     }
     if (socketRef.current) socketRef.current.disconnect();
     navigate('/');
+  };
+
+  const retryMedia = () => {
+    setMediaError(null);
+    if (localStreamRef.current) {
+      localStreamRef.current.getTracks().forEach((t) => t.stop());
+      localStreamRef.current = null;
+    }
   };
 
   if (!joined) {
@@ -67,14 +178,28 @@ export default function GuestRoom() {
             value={username}
             onChange={(e) => setUsername(e.target.value)}
             placeholder="Enter your name"
-            className="w-full px-4 py-3 bg-gray-700 border border-gray-600 rounded-lg text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500 mb-4"
+            disabled={connecting}
+            className="w-full px-4 py-3 bg-gray-700 border border-gray-600 rounded-lg text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500 mb-4 disabled:opacity-50"
           />
-          <button
-            onClick={joinRoom}
-            className="w-full py-3 bg-blue-600 hover:bg-blue-700 text-white font-semibold rounded-lg transition-colors"
-          >
-            Join
-          </button>
+          {mediaError ? (
+            <div className="mb-4">
+              <p className="text-sm text-red-400 mb-2">{mediaError}</p>
+              <button
+                onClick={retryMedia}
+                className="px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white font-semibold rounded-lg transition-colors text-sm"
+              >
+                Retry Camera & Microphone
+              </button>
+            </div>
+          ) : (
+            <button
+              onClick={joinRoom}
+              disabled={connecting}
+              className="w-full py-3 bg-blue-600 hover:bg-blue-700 text-white font-semibold rounded-lg transition-colors disabled:opacity-50"
+            >
+              {connecting ? 'Connecting...' : 'Join'}
+            </button>
+          )}
           <button
             onClick={() => navigate('/')}
             className="w-full py-2 mt-2 text-gray-400 hover:text-white text-sm transition-colors"
@@ -97,7 +222,7 @@ export default function GuestRoom() {
             </div>
           </div>
           {peers.map((p, i) => (
-            <div key={i} className="relative bg-gray-800 rounded-xl overflow-hidden aspect-video">
+            <div key={p.socketId || i} className="relative bg-gray-800 rounded-xl overflow-hidden aspect-video">
               <video ref={(el) => { if (el && p.stream) el.srcObject = p.stream; }} autoPlay className="w-full h-full object-cover" />
             </div>
           ))}

@@ -16,6 +16,8 @@ export default function Room() {
     peers,
     localStream,
     streamReady,
+    mediaError,
+    retryMedia,
     toggleAudio,
     toggleVideo,
     startScreenShare,
@@ -23,7 +25,6 @@ export default function Room() {
   } = useWebRTC(socket, roomId, user);
   const [chatOpen, setChatOpen] = useState(false);
   const [showDebug, setShowDebug] = useState(false);
-  const [mediaError, setMediaError] = useState(null);
 
   if (!connected) {
     return (
@@ -43,9 +44,21 @@ export default function Room() {
             ) : (
               <div className="text-gray-400 text-center px-4">
                 <p className="text-lg">Requesting camera & microphone access...</p>
-                <p className="text-sm mt-2 text-gray-500">
-                  {mediaError || 'Please allow camera and microphone permissions when prompted.'}
-                </p>
+                {mediaError ? (
+                  <div className="mt-4">
+                    <p className="text-sm text-red-400 mb-3">{mediaError}</p>
+                    <button
+                      onClick={retryMedia}
+                      className="px-6 py-2 bg-blue-600 hover:bg-blue-500 text-white font-semibold rounded-lg transition-colors"
+                    >
+                      Retry Camera & Microphone
+                    </button>
+                  </div>
+                ) : (
+                  <p className="text-sm mt-2 text-gray-500">
+                    Please allow camera and microphone permissions when prompted.
+                  </p>
+                )}
               </div>
             )}
 

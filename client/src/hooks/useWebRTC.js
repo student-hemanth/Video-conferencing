@@ -6,11 +6,14 @@ export default function useWebRTC(socket, roomId, user) {
   const [localStream, setLocalStream] = useState(null);
   const [streamReady, setStreamReady] = useState(false);
   const [peerIds, setPeerIds] = useState([]);
+  const [mediaError, setMediaError] = useState(null);
   const peersRef = useRef({});
   const userInfoRef = useRef({});
   const localStreamRef = useRef(null);
+  const pendingPeersRef = useRef({});
 
   useEffect(() => {
+    if (mediaError) return;
     console.log('[useWebRTC] Starting media...');
     const startMedia = async () => {
       try {
@@ -24,6 +27,7 @@ export default function useWebRTC(socket, roomId, user) {
         setStreamReady(true);
       } catch (err) {
         console.error('[useWebRTC] Failed to get media devices:', err.message);
+        setMediaError(err.message);
       }
     };
     startMedia();
@@ -34,7 +38,7 @@ export default function useWebRTC(socket, roomId, user) {
         localStreamRef.current.getTracks().forEach((t) => t.stop());
       }
     };
-  }, []);
+  }, [mediaError]);
 
   const createPeer = useCallback(
     (targetSocketId, initiator) => {
@@ -96,16 +100,12 @@ export default function useWebRTC(socket, roomId, user) {
       console.log('[useWebRTC] Waiting for socket...');
       return;
     }
-    if (!streamReady) {
-      console.log('[useWebRTC] Waiting for stream...');
-      return;
-    }
     if (!roomId || !user) {
       console.log('[useWebRTC] Waiting for room/user...');
       return;
     }
 
-    console.log('[useWebRTC] All ready, joining room:', roomId, 'user:', user.name);
+    console.log('[useWebRTC] Joining room:', roomId, 'user:', user.name);
     socket.emit('join-room', { roomId, user });
 
     const handleRoomUsers = ({ users }) => {
@@ -114,7 +114,11 @@ export default function useWebRTC(socket, roomId, user) {
         if (u.socketId !== socket.id) {
           userInfoRef.current[u.socketId] = { userId: u.id, name: u.name };
           if (!peersRef.current[u.socketId]) {
-            createPeer(u.socketId, true);
+            if (localStreamRef.current) {
+              createPeer(u.socketId, true);
+            } else {
+              pendingPeersRef.current[u.socketId] = true;
+            }
           }
         }
       });
@@ -125,7 +129,11 @@ export default function useWebRTC(socket, roomId, user) {
       console.log('[useWebRTC] user-joined:', name, socketId);
       userInfoRef.current[socketId] = { userId, name };
       if (!peersRef.current[socketId]) {
-        createPeer(socketId, false);
+        if (localStreamRef.current) {
+          createPeer(socketId, false);
+        } else {
+          pendingPeersRef.current[socketId] = false;
+        }
       }
     };
 
@@ -180,7 +188,29 @@ export default function useWebRTC(socket, roomId, user) {
       userInfoRef.current = {};
       setPeerIds([]);
     };
-  }, [socket, streamReady, roomId, user, createPeer]);
+    }, [socket, roomId, user, createPeer]);
+
+  useEffect(() => {
+    if (streamReady && socket?.connected) {
+      Object.entries(pendingPeersRef.current).forEach(([socketId, initiator]) => {
+        if (!peersRef.current[socketId] && localStreamRef.current) {
+          console.log('[useWebRTC] Creating pending peer for', socketId, 'initiator:', initiator);
+          createPeer(socketId, initiator);
+        }
+      });
+      pendingPeersRef.current = {};
+    }
+  }, [streamReady, socket, createPeer]);
+
+  const retryMedia = useCallback(() => {
+    setMediaError(null);
+    if (localStreamRef.current) {
+      localStreamRef.current.getTracks().forEach((t) => t.stop());
+      localStreamRef.current = null;
+    }
+    setStreamReady(false);
+    setLocalStream(null);
+  }, []);
 
   const toggleAudio = useCallback(() => {
     if (localStreamRef.current) {
@@ -266,6 +296,8 @@ export default function useWebRTC(socket, roomId, user) {
     localStream,
     peerIds,
     streamReady,
+    mediaError,
+    retryMedia,
     toggleAudio,
     toggleVideo,
     startScreenShare,
