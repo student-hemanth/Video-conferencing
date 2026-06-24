@@ -20,7 +20,12 @@ export default function GuestRoom() {
   const joinRoom = async () => {
     if (!username.trim()) return;
 
-    socketRef.current = io({ transports: ['websocket', 'polling'] });
+    socketRef.current = io({
+      transports: ['polling', 'websocket'],
+      reconnectionAttempts: 10,
+      reconnectionDelay: 1000,
+      timeout: 20000,
+    });
 
     socketRef.current.on('connect', () => {
       socketRef.current.emit('join-room', {

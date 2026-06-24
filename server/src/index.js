@@ -18,6 +18,8 @@ const httpServer = createServer(app);
 
 const io = new Server(httpServer, {
   cors: { origin: '*', methods: ['GET', 'POST'] },
+  pingTimeout: 60000,
+  pingInterval: 25000,
 });
 
 app.use(cors());
@@ -31,8 +33,12 @@ app.get('/api/health', (_req, res) => {
 });
 
 const clientDist = path.join(__dirname, '../../client/dist');
-app.use(express.static(clientDist));
+app.use(express.static(clientDist, {
+  maxAge: '1y',
+  immutable: true,
+}));
 app.get('*', (_req, res) => {
+  res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
   res.sendFile(path.join(clientDist, 'index.html'));
 });
 

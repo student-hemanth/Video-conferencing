@@ -7,7 +7,12 @@ export default function useSocket(_roomId) {
   const socketRef = useRef(null);
 
   useEffect(() => {
-    const s = io({ transports: ['websocket', 'polling'] });
+    const s = io({
+      transports: ['polling', 'websocket'],
+      reconnectionAttempts: 10,
+      reconnectionDelay: 1000,
+      timeout: 20000,
+    });
     socketRef.current = s;
 
     s.on('connect', () => {
