@@ -59,4 +59,20 @@ router.post('/join/:roomId', protect, async (req, res) => {
   }
 });
 
+router.delete('/:roomId', protect, async (req, res) => {
+  try {
+    const room = await Room.findOne({ roomId: req.params.roomId });
+    if (!room) {
+      return res.status(404).json({ message: 'Room not found' });
+    }
+    if (room.host.toString() !== req.user._id.toString()) {
+      return res.status(403).json({ message: 'Only the host can delete this room' });
+    }
+    await Room.deleteOne({ roomId: req.params.roomId });
+    res.json({ message: 'Room deleted' });
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+});
+
 export default router;

@@ -11,6 +11,7 @@ export default function Home() {
   const [error, setError] = useState('');
   const [recentRooms, setRecentRooms] = useState([]);
   const [copiedId, setCopiedId] = useState(null);
+  const [deletingId, setDeletingId] = useState(null);
 
   useEffect(() => {
     api.get('/rooms')
@@ -44,6 +45,20 @@ export default function Home() {
     navigator.clipboard.writeText(id);
     setCopiedId(id);
     setTimeout(() => setCopiedId(null), 2000);
+  };
+
+  const handleDelete = async (roomId, e) => {
+    e.stopPropagation();
+    if (!confirm('Delete this meeting permanently?')) return;
+    setDeletingId(roomId);
+    try {
+      await api.delete(`/rooms/${roomId}`);
+      setRecentRooms(prev => prev.filter(r => r.roomId !== roomId));
+    } catch (err) {
+      alert(err.response?.data?.message || 'Failed to delete room');
+    } finally {
+      setDeletingId(null);
+    }
   };
 
   return (
@@ -204,37 +219,58 @@ export default function Home() {
                 className="group bg-white rounded-xl p-5 border border-gray-200 shadow-sm hover:shadow-md hover:border-blue-300 transition-all cursor-pointer"
                 onClick={() => navigate(`/room/${room.roomId}`)}
               >
-                <div className="flex items-start justify-between mb-3">
-                  <div className="flex items-center gap-2">
-                    <div className="w-2 h-2 rounded-full bg-emerald-500" />
-                    <span className="text-xs font-mono text-gray-400">{room.roomId}</span>
+                  <div className="flex items-start justify-between mb-3">
+                    <div className="flex items-center gap-2">
+                      <div className="w-2 h-2 rounded-full bg-emerald-500" />
+                      <span className="text-xs font-mono text-gray-400">{room.roomId}</span>
+                    </div>
+                    <div className="flex items-center gap-1">
+                      {room.host?._id === user?.id && (
+                        <button
+                          onClick={(e) => handleDelete(room.roomId, e)}
+                          disabled={deletingId === room.roomId}
+                          className="opacity-0 group-hover:opacity-100 transition-opacity p-1.5 rounded-lg hover:bg-red-50 text-gray-400 hover:text-red-500"
+                          title="Delete room"
+                        >
+                          {deletingId === room.roomId ? (
+                            <svg className="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24">
+                              <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                              <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                            </svg>
+                          ) : (
+                            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                            </svg>
+                          )}
+                        </button>
+                      )}
+                      <button
+                        onClick={(e) => { e.stopPropagation(); copyToClipboard(room.roomId); }}
+                        className="opacity-0 group-hover:opacity-100 transition-opacity p-1.5 rounded-lg hover:bg-gray-100 text-gray-400 hover:text-gray-600"
+                        title="Copy room ID"
+                      >
+                        {copiedId === room.roomId ? (
+                          <svg className="w-4 h-4 text-emerald-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                          </svg>
+                        ) : (
+                          <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
+                          </svg>
+                        )}
+                      </button>
+                    </div>
+                    <h3 className="text-gray-900 font-semibold mb-1 truncate">{room.name}</h3>
+                    <div className="flex items-center gap-3 text-xs text-gray-400">
+                      <span>{room.host?.name || 'Unknown'}</span>
+                      <span className="w-1 h-1 rounded-full bg-gray-300" />
+                      <span>{new Date(room.updatedAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}</span>
+                    </div>
                   </div>
-                  <button
-                    onClick={(e) => { e.stopPropagation(); copyToClipboard(room.roomId); }}
-                    className="opacity-0 group-hover:opacity-100 transition-opacity p-1.5 rounded-lg hover:bg-gray-100 text-gray-400 hover:text-gray-600"
-                    title="Copy room ID"
-                  >
-                    {copiedId === room.roomId ? (
-                      <svg className="w-4 h-4 text-emerald-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
-                      </svg>
-                    ) : (
-                      <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
-                      </svg>
-                    )}
-                  </button>
                 </div>
-                <h3 className="text-gray-900 font-semibold mb-1 truncate">{room.name}</h3>
-                <div className="flex items-center gap-3 text-xs text-gray-400">
-                  <span>{room.host?.name || 'Unknown'}</span>
-                  <span className="w-1 h-1 rounded-full bg-gray-300" />
-                  <span>{new Date(room.updatedAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}</span>
-                </div>
-              </div>
-            ))}
-          </div>
-        ) : (
+              ))}
+            </div>
+          ) : (
           <div className="text-center py-16 bg-white rounded-2xl border border-gray-200 shadow-sm">
             <div className="w-16 h-16 mx-auto mb-4 rounded-2xl bg-gray-100 flex items-center justify-center">
               <svg className="w-8 h-8 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
