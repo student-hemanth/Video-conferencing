@@ -57,6 +57,8 @@ export default function useWebRTC(socket, roomId, user) {
         },
       });
 
+      peersRef.current[targetSocketId] = { peer, stream: null, peerId: targetSocketId };
+
       peer.on('signal', (signal) => {
         console.log('[createPeer] Sending signal to', targetSocketId);
         socket.emit('signal', { to: targetSocketId, signal });
@@ -65,13 +67,12 @@ export default function useWebRTC(socket, roomId, user) {
       peer.on('stream', (remoteStream) => {
         console.log('[createPeer] Got remote stream from', targetSocketId);
         const info = userInfoRef.current[targetSocketId] || {};
-        peersRef.current[targetSocketId] = {
-          peer,
-          stream: remoteStream,
-          peerId: targetSocketId,
-          userId: info.userId,
-          userName: info.name || 'Unknown',
-        };
+        const entry = peersRef.current[targetSocketId];
+        if (entry) {
+          entry.stream = remoteStream;
+          entry.userId = info.userId;
+          entry.userName = info.name || 'Unknown';
+        }
         setPeers(Object.values(peersRef.current));
       });
 
